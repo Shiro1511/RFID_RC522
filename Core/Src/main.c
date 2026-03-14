@@ -140,6 +140,7 @@ int main(void)
           uint8_t dataLen = 18;
           if (RC522_ReadBlock(&hrc522, 4, data, &dataLen) == RC522_OK)
           {
+            /* Process data */
           }
           RC522_StopCrypto(&hrc522);
         }
