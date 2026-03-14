@@ -1,0 +1,64 @@
+# ==========================================================
+# STM32 + CubeMX + CubeIDE + CMake + VSCode Git Ignore File
+# ==========================================================
+
+# --- Build output ---
+build/
+cmake-build*/
+Debug/
+Release/
+*.o
+*.elf
+*.map
+*.bin
+*.hex
+*.list
+*.srec
+
+# --- IDE configurations ---
+.vscode/
+.settings/
+.idea/
+*.launch
+*.workspace
+*.db
+*.depend
+*.dep
+
+# --- STM32CubeMX generated cache ---
+*.ioc-backup
+*.bak
+*.tmp
+*.log
+*.swp
+
+# --- System / OS files ---
+.DS_Store
+Thumbs.db
+
+# --- Auto-generated intermediate files ---
+*.d
+*.lst
+*.axf
+*.crf
+*.htm
+*.lnp
+*.uvoptx
+*.uvprojx
+*.ewp
+*.ewd
+*.ewt
+*.uvgui.*
+
+# --- CMake specific ---
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# --- Miscellaneous ---
+# (Optional) Exclude CubeIDE metadata
+.metadata/
+*.ielf
+*.build
