@@ -1,15 +1,21 @@
 #include "RC522.h"
 
-/* Constant */
+/* ============================================================
+ * Constant
+ * ============================================================ */
 const MIFARE_Key MIFARE_DEFAULT_KEY = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
 
-/* Private macros — CS and RST using handle fields */
+/* ============================================================
+ * Private macros
+ * ============================================================ */
 #define _CS_LOW(h) HAL_GPIO_WritePin((h)->cs_port, (h)->cs_pin, GPIO_PIN_RESET)
 #define _CS_HIGH(h) HAL_GPIO_WritePin((h)->cs_port, (h)->cs_pin, GPIO_PIN_SET)
 #define _RST_LOW(h) HAL_GPIO_WritePin((h)->rst_port, (h)->rst_pin, GPIO_PIN_RESET)
 #define _RST_HIGH(h) HAL_GPIO_WritePin((h)->rst_port, (h)->rst_pin, GPIO_PIN_SET)
 
-/*  Private: low-level SPI register access */
+/* ============================================================
+ * Public: Register access
+ * ============================================================ */
 
 void RC522_WriteRegister(RC522_HandleTypeDef *hrc522, uint8_t reg, uint8_t value)
 {
@@ -35,7 +41,10 @@ uint8_t RC522_ReadRegister(RC522_HandleTypeDef *hrc522, uint8_t reg)
     return rx;
 }
 
-/* Private: register bit helpers */
+/* ============================================================
+ * Private: register bit helpers
+ * ============================================================ */
+
 static void _SetBits(RC522_HandleTypeDef *hrc522, uint8_t reg, uint8_t mask)
 {
     RC522_WriteRegister(hrc522, reg, RC522_ReadRegister(hrc522, reg) | mask);
@@ -46,27 +55,21 @@ static void _ClearBits(RC522_HandleTypeDef *hrc522, uint8_t reg, uint8_t mask)
     RC522_WriteRegister(hrc522, reg, RC522_ReadRegister(hrc522, reg) & ~mask);
 }
 
-/* Private: bulk FIFO read/write */
+/* ============================================================
+ * Private: bulk FIFO read / write
+ * ============================================================ */
 
-/**
- * @brief Write 'count' bytes into the FIFO register.
- */
 static void _WriteRegisterBurst(RC522_HandleTypeDef *hrc522,
                                 uint8_t reg, uint8_t count, uint8_t *values)
 {
     uint8_t addr = (reg << 1) & 0x7E;
+
     _CS_LOW(hrc522);
     HAL_SPI_Transmit(hrc522->hspi, &addr, 1, RC522_TIMEOUT_MS);
     HAL_SPI_Transmit(hrc522->hspi, values, count, RC522_TIMEOUT_MS);
     _CS_HIGH(hrc522);
 }
 
-/**
- * @brief Read 'count' bytes from the FIFO register.
- *
- * @param rxAlign  Bit position in the first received byte where valid
- *                 bits start (used during anti-collision, normally 0).
- */
 static void _ReadRegisterBurst(RC522_HandleTypeDef *hrc522,
                                uint8_t reg, uint8_t count,
                                uint8_t *values, uint8_t rxAlign)
@@ -83,7 +86,6 @@ static void _ReadRegisterBurst(RC522_HandleTypeDef *hrc522,
     {
         if (i == 0 && rxAlign)
         {
-            /* Merge only the bits starting at rxAlign into values[0] */
             uint8_t mask = 0x00;
             for (uint8_t b = rxAlign; b <= 7; b++)
                 mask |= (1u << b);
@@ -99,15 +101,10 @@ static void _ReadRegisterBurst(RC522_HandleTypeDef *hrc522,
     _CS_HIGH(hrc522);
 }
 
-/* Private: CRC co-processor */
+/* ============================================================
+ * Private: CRC co-processor
+ * ============================================================ */
 
-/**
- * @brief Compute CRC_A (ISO 14443-3) using the RC522's on-chip CRC unit.
- *
- * @param data    Input buffer
- * @param length  Number of bytes to process
- * @param result  2-byte output (result[0]=LSB, result[1]=MSB)
- */
 static RC522_Status _CalculateCRC(RC522_HandleTypeDef *hrc522,
                                   uint8_t *data, uint8_t length,
                                   uint8_t *result)
@@ -118,11 +115,10 @@ static RC522_Status _CalculateCRC(RC522_HandleTypeDef *hrc522,
     _WriteRegisterBurst(hrc522, RC522_REG_FIFO_DATA, length, data);
     RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_CALC_CRC);
 
-    /* Wait for CRCIRq — should complete within ~89 µs for ≤64 bytes */
     uint32_t deadline = HAL_GetTick() + 100;
     while (HAL_GetTick() < deadline)
     {
-        if (RC522_ReadRegister(hrc522, RC522_REG_DIV_IRQ) & 0x04) /* CRCIRq */
+        if (RC522_ReadRegister(hrc522, RC522_REG_DIV_IRQ) & 0x04)
         {
             RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
             result[0] = RC522_ReadRegister(hrc522, RC522_REG_CRC_RESULT_L);
@@ -133,20 +129,10 @@ static RC522_Status _CalculateCRC(RC522_HandleTypeDef *hrc522,
     return RC522_TIMEOUT;
 }
 
-/* Private: Transceive */
+/* ============================================================
+ * Private: Transceive  (dùng cho MF_READ, MF_WRITE, HLTA)
+ * ============================================================ */
 
-/**
- * @brief Transmit bytes via the antenna and collect the card response.
- *
- * @param sendData    Bytes to send
- * @param sendLen     Number of bytes to send
- * @param backData    Buffer for received bytes (may be NULL)
- * @param backLen     [in] capacity of backData, [out] bytes actually received
- * @param validBits   [in] number of valid bits in the last TX byte (0=full byte);
- *                    [out] number of valid bits in the last RX byte
- * @param rxAlign     Bit-alignment offset in first received byte (anticollision)
- * @param checkCRC    Verify the two trailing CRC bytes when true
- */
 static RC522_Status _Transceive(RC522_HandleTypeDef *hrc522,
                                 uint8_t *sendData, uint8_t sendLen,
                                 uint8_t *backData, uint8_t *backLen,
@@ -157,37 +143,41 @@ static RC522_Status _Transceive(RC522_HandleTypeDef *hrc522,
     uint8_t txLastBits = validBits ? *validBits : 0;
     uint8_t bitFraming = (uint8_t)((rxAlign << 4) | txLastBits);
 
-    /* Prepare */
     RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
-    RC522_WriteRegister(hrc522, RC522_REG_COM_IRQ, 0x7F);    /* clear all IRQ */
     RC522_WriteRegister(hrc522, RC522_REG_FIFO_LEVEL, 0x80); /* flush FIFO    */
+    RC522_WriteRegister(hrc522, RC522_REG_COM_IRQ, 0x7F);    /* clear all IRQ */
     _WriteRegisterBurst(hrc522, RC522_REG_FIFO_DATA, sendLen, sendData);
     RC522_WriteRegister(hrc522, RC522_REG_BIT_FRAMING, bitFraming);
     RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_TRANSCEIVE);
     _SetBits(hrc522, RC522_REG_BIT_FRAMING, 0x80); /* StartSend = 1 */
 
-    /* Wait for RxIRq or IdleIRq (≤36 ms) */
-    uint32_t deadline = HAL_GetTick() + 40;
+    uint32_t deadline = HAL_GetTick() + 200;
     uint8_t irq = 0;
     while (HAL_GetTick() < deadline)
     {
         irq = RC522_ReadRegister(hrc522, RC522_REG_COM_IRQ);
         if (irq & 0x30)
-            break; /* RxIRq | IdleIRq  */
+            break;
         if (irq & 0x01)
-            return RC522_TIMEOUT; /* TimerIRq    */
+        {
+            _ClearBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+            RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+            return RC522_TIMEOUT;
+        }
     }
+
+    _ClearBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+
     if (!(irq & 0x30))
         return RC522_TIMEOUT;
 
-    /* Check error register (BufferOvfl | ParityErr | ProtocolErr) */
     uint8_t errReg = RC522_ReadRegister(hrc522, RC522_REG_ERROR);
-    if (errReg & 0x13)
-        return RC522_ERR;
+    if (errReg & 0x93)
+        return RC522_ERR; /* BufferOvfl | ParityErr | ProtocolErr */
 
     uint8_t _validBits = 0;
 
-    /* Read received bytes from FIFO */
     if (backData && backLen)
     {
         uint8_t n = RC522_ReadRegister(hrc522, RC522_REG_FIFO_LEVEL);
@@ -201,9 +191,8 @@ static RC522_Status _Transceive(RC522_HandleTypeDef *hrc522,
     }
 
     if (errReg & 0x08)
-        return RC522_COLLISION; /* CollErr */
+        return RC522_COLLISION;
 
-    /* Optional CRC check */
     if (checkCRC && backData && backLen)
     {
         if (*backLen < 2 || _validBits != 0)
@@ -220,7 +209,10 @@ static RC522_Status _Transceive(RC522_HandleTypeDef *hrc522,
     return RC522_OK;
 }
 
-/* Private: REQA / WUPA helper */
+/* ============================================================
+ * Private: REQA helper  (viết tay, không dùng _Transceive)
+ * ============================================================ */
+
 static RC522_Status _RequestA_or_WakeupA(RC522_HandleTypeDef *hrc522,
                                          uint8_t cmd,
                                          uint8_t *bufATQA,
@@ -229,20 +221,70 @@ static RC522_Status _RequestA_or_WakeupA(RC522_HandleTypeDef *hrc522,
     if (!bufATQA || *bufSize < 2)
         return RC522_NO_ROOM;
 
+    /* Đảm bảo antenna bật */
+    uint8_t tx_ctrl = RC522_ReadRegister(hrc522, RC522_REG_TX_CONTROL);
+    if (!(tx_ctrl & 0x03))
+    {
+        RC522_WriteRegister(hrc522, RC522_REG_TX_CONTROL, tx_ctrl | 0x03);
+        HAL_Delay(1);
+    }
+
     _ClearBits(hrc522, RC522_REG_COLL, 0x80); /* ValuesAfterColl = 0 */
-    uint8_t validBits = 7;                    /* Short frame: 7 bits */
-    RC522_Status s = _Transceive(hrc522, &cmd, 1,
-                                 bufATQA, bufSize,
-                                 &validBits, 0, 0);
-    if (s != RC522_OK)
-        return s;
-    if (*bufSize != 2 || validBits != 0)
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+    RC522_WriteRegister(hrc522, RC522_REG_FIFO_LEVEL, 0x80); /* flush FIFO          */
+    RC522_WriteRegister(hrc522, RC522_REG_COM_IRQ, 0x7F);    /* clear all IRQ       */
+    RC522_WriteRegister(hrc522, RC522_REG_FIFO_DATA, cmd);
+    RC522_WriteRegister(hrc522, RC522_REG_BIT_FRAMING, 0x07); /* 7-bit short frame  */
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_TRANSCEIVE);
+    _SetBits(hrc522, RC522_REG_BIT_FRAMING, 0x80); /* StartSend = 1       */
+
+    uint32_t deadline = HAL_GetTick() + 100;
+    uint8_t irq = 0;
+    while (HAL_GetTick() < deadline)
+    {
+        irq = RC522_ReadRegister(hrc522, RC522_REG_COM_IRQ);
+        if (irq & 0x30)
+            break;
+        if (irq & 0x01)
+        {
+            _ClearBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+            RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+            return RC522_TIMEOUT;
+        }
+    }
+
+    _ClearBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+
+    if (!(irq & 0x30))
+        return RC522_TIMEOUT;
+
+    uint8_t errReg = RC522_ReadRegister(hrc522, RC522_REG_ERROR);
+    if (errReg & 0x13)
         return RC522_ERR;
-    return RC522_OK;
+
+    uint8_t n = RC522_ReadRegister(hrc522, RC522_REG_FIFO_LEVEL);
+    if (n == 0)
+        return RC522_ERR;
+
+    uint8_t toRead = (n < *bufSize) ? n : *bufSize;
+    *bufSize = toRead;
+    _ReadRegisterBurst(hrc522, RC522_REG_FIFO_DATA, toRead, bufATQA, 0);
+
+    uint8_t validBitsRx = RC522_ReadRegister(hrc522, RC522_REG_CONTROL) & 0x07;
+    if (*bufSize == 2 && validBitsRx == 0)
+        return RC522_OK;
+
+    return RC522_ERR;
 }
 
-/* Public: Initialisation */
-RC522_Status RC522_Init(RC522_HandleTypeDef *hrc522, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port,
+/* ============================================================
+ * Public: Initialisation
+ * ============================================================ */
+
+RC522_Status RC522_Init(RC522_HandleTypeDef *hrc522,
+                        SPI_HandleTypeDef *hspi,
+                        GPIO_TypeDef *cs_port,
                         uint16_t cs_pin,
                         GPIO_TypeDef *rst_port,
                         uint16_t rst_pin)
@@ -262,28 +304,24 @@ RC522_Status RC522_Init(RC522_HandleTypeDef *hrc522, SPI_HandleTypeDef *hspi, GP
 
     RC522_Reset(hrc522);
 
-    /*
-     * Timer configuration
-     *   TAuto = 1  — timer starts automatically after transmission
-     *   f_timer = 13.56 MHz / (2 × TPreScaler+1)
-     *   TPreScaler = 0xA9 → f ≈ 40 kHz
-     *   TReload = 0x03E8 → timeout ≈ 25 ms
-     */
-    RC522_WriteRegister(hrc522, RC522_REG_T_MODE, 0x80);
-    RC522_WriteRegister(hrc522, RC522_REG_T_PRESCALER, 0xA9);
-    RC522_WriteRegister(hrc522, RC522_REG_T_RELOAD_H, 0x03);
-    RC522_WriteRegister(hrc522, RC522_REG_T_RELOAD_L, 0xE8);
+    /* Timer: TAuto=1, TGated=11 (mux timer), prescaler → ~30 kHz, reload=30 */
+    RC522_WriteRegister(hrc522, RC522_REG_T_MODE, 0x8D);
+    RC522_WriteRegister(hrc522, RC522_REG_T_PRESCALER, 0x3E);
+    RC522_WriteRegister(hrc522, RC522_REG_T_RELOAD_H, 0x00);
+    RC522_WriteRegister(hrc522, RC522_REG_T_RELOAD_L, 0x1E);
 
-    /* Force 100 % ASK modulation */
+    /* 100% ASK modulation */
     RC522_WriteRegister(hrc522, RC522_REG_TX_ASK, 0x40);
 
-    /* CRC preset value = 0x6363  (ISO 14443-3 §6.2.4) */
+    /* CRC preset = 0x6363 (ISO 14443-3 §6.2.4) */
     RC522_WriteRegister(hrc522, RC522_REG_MODE, 0x3D);
 
-    /* Enable antenna (TX1 and TX2 on) */
+    /* RF gain: max (48 dB) */
+    RC522_WriteRegister(hrc522, RC522_REG_RF_CFG, 0x7F);
+
+    /* Enable antenna TX1 + TX2 */
     _SetBits(hrc522, RC522_REG_TX_CONTROL, 0x03);
 
-    /* Sanity check: read firmware version */
     uint8_t ver = RC522_GetVersion(hrc522);
     if (ver == 0x00 || ver == 0xFF)
         return RC522_ERR;
@@ -295,12 +333,9 @@ void RC522_Reset(RC522_HandleTypeDef *hrc522)
 {
     RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_SOFT_RESET);
     HAL_Delay(50);
-    /* PowerDown bit (bit4) clears automatically when reset completes */
     uint8_t retries = 3;
     while ((RC522_ReadRegister(hrc522, RC522_REG_COMMAND) & (1 << 4)) && retries--)
-    {
         HAL_Delay(50);
-    }
 }
 
 uint8_t RC522_GetVersion(RC522_HandleTypeDef *hrc522)
@@ -308,7 +343,10 @@ uint8_t RC522_GetVersion(RC522_HandleTypeDef *hrc522)
     return RC522_ReadRegister(hrc522, RC522_REG_VERSION);
 }
 
-/* Public: Card detection */
+/* ============================================================
+ * Public: Card detection
+ * ============================================================ */
+
 RC522_Status RC522_IsCardPresent(RC522_HandleTypeDef *hrc522)
 {
     uint8_t atqa[2];
@@ -316,132 +354,65 @@ RC522_Status RC522_IsCardPresent(RC522_HandleTypeDef *hrc522)
     return _RequestA_or_WakeupA(hrc522, PICC_CMD_REQA, atqa, &atqaSize);
 }
 
+/**
+ * @brief Đọc UID 4 byte (Cascade Level 1) từ thẻ Mifare Classic.
+ *
+ * Gửi lệnh anticollision 0x93 0x20, đọc 5 byte từ FIFO
+ * (4 byte UID + 1 byte BCC checksum), kiểm tra BCC rồi lưu UID.
+ * uid->sak được đặt = 0 — nếu cần SAK, dùng SELECT đầy đủ.
+ */
 RC522_Status RC522_ReadCardUID(RC522_HandleTypeDef *hrc522, RC522_UID *uid)
 {
     if (!hrc522 || !uid)
         return RC522_INVALID;
 
     _ClearBits(hrc522, RC522_REG_COLL, 0x80);
-    uid->size = 0;
+    RC522_WriteRegister(hrc522, RC522_REG_FIFO_LEVEL, 0x80);
+    RC522_WriteRegister(hrc522, RC522_REG_COM_IRQ, 0x7F);
 
-    for (uint8_t cascadeLevel = 1; cascadeLevel <= 3; cascadeLevel++)
+    /* Anticollision CL1: SEL=0x93, NVB=0x20 (2 bytes, 0 known bits) */
+    uint8_t cmd[2] = {PICC_CMD_SEL_CL1, 0x20};
+    RC522_WriteRegister(hrc522, RC522_REG_BIT_FRAMING, 0x00);
+    _WriteRegisterBurst(hrc522, RC522_REG_FIFO_DATA, 2, cmd);
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_TRANSCEIVE);
+    _SetBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+
+    uint32_t deadline = HAL_GetTick() + 100;
+    uint8_t irq = 0;
+    while (HAL_GetTick() < deadline)
     {
-        uint8_t selCmd;
-        uint8_t uidIndex;
-        switch (cascadeLevel)
-        {
-        case 1:
-            selCmd = PICC_CMD_SEL_CL1;
-            uidIndex = 0;
+        irq = RC522_ReadRegister(hrc522, RC522_REG_COM_IRQ);
+        if (irq & 0x30)
             break;
-        case 2:
-            selCmd = PICC_CMD_SEL_CL2;
-            uidIndex = 3;
-            break;
-        default:
-            selCmd = PICC_CMD_SEL_CL3;
-            uidIndex = 6;
-            break;
-        }
-
-        int16_t currentLevelKnownBits = 0;
-        uint8_t buffer[9]; /* [SEL][NVB][UID x4][BCC][CRC_L][CRC_H] */
-        uint8_t selectDone = 0;
-
-        while (!selectDone)
-        {
-            uint8_t txLastBits;
-            uint8_t bufferUsed;
-            uint8_t *responseBuffer;
-            uint8_t responseLength;
-
-            if (currentLevelKnownBits >= 32)
-            {
-                /* --- SELECT frame: NVB = 0x70 (7 bytes total) --- */
-                buffer[0] = selCmd;
-                buffer[1] = 0x70;
-                /* BCC = XOR of the four UID bytes */
-                buffer[6] = buffer[2] ^ buffer[3] ^ buffer[4] ^ buffer[5];
-                RC522_Status s = _CalculateCRC(hrc522, buffer, 7, &buffer[7]);
-                if (s != RC522_OK)
-                    return s;
-
-                txLastBits = 0;
-                bufferUsed = 9;
-                responseBuffer = &buffer[6]; /* expect SAK + CRC */
-                responseLength = 3;
-            }
-            else
-            {
-                /* --- ANTICOLLISION frame --- */
-                uint8_t bytesKnown = (uint8_t)(currentLevelKnownBits / 8);
-                txLastBits = (uint8_t)(currentLevelKnownBits % 8);
-                uint8_t startIndex = 2 + bytesKnown;
-
-                buffer[0] = selCmd;
-                buffer[1] = (uint8_t)((startIndex << 4) | txLastBits);
-                bufferUsed = startIndex + (txLastBits ? 1 : 0);
-                responseBuffer = &buffer[startIndex];
-                responseLength = (uint8_t)(sizeof(buffer) - startIndex);
-            }
-
-            uint8_t rxAlign = txLastBits;
-            uint8_t validBits = txLastBits;
-            RC522_WriteRegister(hrc522, RC522_REG_BIT_FRAMING,
-                                (uint8_t)((rxAlign << 4) | txLastBits));
-
-            RC522_Status result = _Transceive(hrc522,
-                                              buffer, bufferUsed,
-                                              responseBuffer, &responseLength,
-                                              &validBits, rxAlign, 0);
-
-            if (result == RC522_COLLISION)
-            {
-                uint8_t collReg = RC522_ReadRegister(hrc522, RC522_REG_COLL);
-                if (collReg & 0x20)
-                    return RC522_COLLISION; /* no valid pos */
-                uint8_t collPos = collReg & 0x1F;
-                if (collPos == 0)
-                    collPos = 32;
-                if (collPos <= (uint8_t)currentLevelKnownBits)
-                    return RC522_INTERNAL_ERR;
-                currentLevelKnownBits = (int16_t)collPos;
-                /* Resolve: force the colliding bit to 1 */
-                uint8_t count = (uint8_t)(currentLevelKnownBits % 8);
-                uint8_t idx = (uint8_t)(1 + (currentLevelKnownBits / 8) +
-                                        (count ? 1 : 0));
-                buffer[idx] |= (1u << count);
-            }
-            else if (result != RC522_OK)
-            {
-                return result;
-            }
-            else
-            {
-                if (currentLevelKnownBits >= 32)
-                    selectDone = 1; /* SELECT response received */
-                else
-                    currentLevelKnownBits = 32; /* all bits known, send SELECT next */
-            }
-        } /* while (!selectDone) */
-
-        /*
-         * Copy UID bytes into uid->uidByte[].
-         * If buffer[2] == CT (cascade tag), skip it and copy only 3 bytes.
-         */
-        uint8_t hasCT = (buffer[2] == PICC_CMD_CT);
-        uint8_t startByte = hasCT ? 3u : 2u;
-        uint8_t bytesToCopy = hasCT ? 3u : 4u;
-
-        for (uint8_t i = 0; i < bytesToCopy; i++)
-            uid->uidByte[uidIndex + i] = buffer[startByte + i];
-
-        uid->size += bytesToCopy;
-        uid->sak = buffer[6]; /* SAK from SELECT response */
-
-        if (!hasCT)
-            break; /* no more cascade levels needed */
     }
+
+    _ClearBits(hrc522, RC522_REG_BIT_FRAMING, 0x80);
+    RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_IDLE);
+
+    if (!(irq & 0x30))
+        return RC522_TIMEOUT;
+
+    uint8_t errReg = RC522_ReadRegister(hrc522, RC522_REG_ERROR);
+    if (errReg & 0x13)
+        return RC522_ERR;
+
+    uint8_t fifoLevel = RC522_ReadRegister(hrc522, RC522_REG_FIFO_LEVEL);
+    if (fifoLevel != 5)
+        return RC522_ERR; /* 4 byte UID + 1 byte BCC */
+
+    uint8_t buf[5];
+    _ReadRegisterBurst(hrc522, RC522_REG_FIFO_DATA, 5, buf, 0);
+
+    /* Kiểm tra BCC: XOR của 4 byte UID phải bằng byte thứ 5 */
+    if ((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) != buf[4])
+        return RC522_ERR;
+
+    uid->size = 4;
+    uid->uidByte[0] = buf[0];
+    uid->uidByte[1] = buf[1];
+    uid->uidByte[2] = buf[2];
+    uid->uidByte[3] = buf[3];
+    uid->sak = 0x00; /* SAK chưa được đọc qua SELECT */
 
     return RC522_OK;
 }
@@ -460,7 +431,10 @@ RC522_Status RC522_HaltCard(RC522_HandleTypeDef *hrc522)
     return (s == RC522_TIMEOUT) ? RC522_OK : RC522_ERR;
 }
 
-/* Public: Mifare Classic */
+/* ============================================================
+ * Public: Mifare Classic
+ * ============================================================ */
+
 RC522_Status RC522_Authenticate(RC522_HandleTypeDef *hrc522,
                                 uint8_t cmd,
                                 uint8_t blockAddr,
@@ -470,13 +444,6 @@ RC522_Status RC522_Authenticate(RC522_HandleTypeDef *hrc522,
     if (!hrc522 || !key || !uid)
         return RC522_INVALID;
 
-    /*
-     * MFAuthent payload (12 bytes):
-     *   [0]    auth command (0x60 / 0x61)
-     *   [1]    block address
-     *   [2-7]  6-byte key
-     *   [8-11] last 4 bytes of the card UID
-     */
     uint8_t send[12];
     send[0] = cmd;
     send[1] = blockAddr;
@@ -493,7 +460,6 @@ RC522_Status RC522_Authenticate(RC522_HandleTypeDef *hrc522,
     _WriteRegisterBurst(hrc522, RC522_REG_FIFO_DATA, 12, send);
     RC522_WriteRegister(hrc522, RC522_REG_COMMAND, RC522_CMD_MF_AUTHENT);
 
-    /* Wait for IdleIRq (bit4) */
     uint32_t deadline = HAL_GetTick() + 200;
     uint8_t irq = 0;
     while (HAL_GetTick() < deadline)
@@ -539,7 +505,6 @@ RC522_Status RC522_WriteBlock(RC522_HandleTypeDef *hrc522,
     if (!data)
         return RC522_INVALID;
 
-    /* Phase 1: WRITE command + block address */
     uint8_t cmd[4];
     cmd[0] = PICC_CMD_MF_WRITE;
     cmd[1] = blockAddr;
@@ -555,7 +520,6 @@ RC522_Status RC522_WriteBlock(RC522_HandleTypeDef *hrc522,
     if (respLen != 1 || resp[0] != 0x0A)
         return RC522_MIFARE_NACK;
 
-    /* Phase 2: 16-byte payload + CRC */
     uint8_t payload[18];
     memcpy(payload, data, 16);
     s = _CalculateCRC(hrc522, payload, 16, &payload[16]);
@@ -574,10 +538,13 @@ RC522_Status RC522_WriteBlock(RC522_HandleTypeDef *hrc522,
 
 void RC522_StopCrypto(RC522_HandleTypeDef *hrc522)
 {
-    _ClearBits(hrc522, RC522_REG_STATUS2, 0x08);
+    _ClearBits(hrc522, RC522_REG_STATUS2, 0x08); /* MFCrypto1On = 0 */
 }
 
-/* Public: Utility */
+/* ============================================================
+ * Public: Utility
+ * ============================================================ */
+
 PICC_Type RC522_GetPICCType(uint8_t sak)
 {
     sak &= 0x7F;
