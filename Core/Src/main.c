@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "RC522.h"
 #include "LCD_I2C.h"
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,7 +42,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c2;
+I2C_HandleTypeDef hi2c1;
 
 SPI_HandleTypeDef hspi1;
 
@@ -53,8 +54,8 @@ RC522_HandleTypeDef hrc522;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_I2C2_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -93,24 +94,35 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_I2C2_Init();
   MX_SPI1_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   RC522_UID uid;
-  MIFARE_Key key = MIFARE_DEFAULT_KEY;
-  char uidStr[32];
+  char msg[32];
 
-  LCD_Init(&hlcd1, &hi2c2, LCD_ADDR);
+  uint8_t authorizedUID[4] = {0x71, 0x04, 0x00, 0x00};
+
+  LCD_Init(&hlcd1, &hi2c1, LCD_ADDR);
   LCD_Clear_Display(&hlcd1);
-  LCD_SetCursor(&hlcd1, 0, 1);
-  LCD_Print(&hlcd1, "RFID RC522!");
+  LCD_SetCursor(&hlcd1, 0, 0);
+  LCD_Print(&hlcd1, "RFID System");
 
   if (RC522_Init(&hrc522, &hspi1, GPIOA, GPIO_PIN_4, GPIOA, GPIO_PIN_3) != RC522_OK)
   {
-    LCD_SetCursor(&hlcd1, 1, 1);
+    LCD_SetCursor(&hlcd1, 1, 0);
     LCD_Print(&hlcd1, "RC522 Error!");
     Error_Handler();
   }
+
+  uint8_t version = RC522_GetVersion(&hrc522);
+  sprintf(msg, "Ver:0x%02X", version);
+  LCD_SetCursor(&hlcd1, 1, 0);
+  LCD_Print(&hlcd1, msg);
+  HAL_Delay(2000);
+
+  LCD_Clear_Display(&hlcd1);
+  LCD_SetCursor(&hlcd1, 0, 0);
+  LCD_Print(&hlcd1, "Scan RFID Card");
 
   /* USER CODE END 2 */
 
@@ -123,31 +135,51 @@ int main(void)
     /* USER CODE BEGIN 3 */
     if (RC522_IsCardPresent(&hrc522) == RC522_OK)
     {
+      LCD_SetCursor(&hlcd1, 1, 0);
+      LCD_Print(&hlcd1, "Reading...     ");
+      HAL_Delay(1000);
+
       if (RC522_ReadCardUID(&hrc522, &uid) == RC522_OK)
       {
 
-        RC522_UIDtoString(&uid, uidStr, sizeof(uidStr));
-        LCD_Clear_Display(&hlcd1);
-        LCD_SetCursor(&hlcd1, 0, 1);
-        LCD_Print(&hlcd1, "UID:");
-        LCD_SetCursor(&hlcd1, 1, 1);
-        LCD_Print(&hlcd1, uidStr);
+        sprintf(msg, "%02X %02X %02X %02X",
+                uid.uidByte[0], uid.uidByte[1], uid.uidByte[2], uid.uidByte[3]);
 
-        if (RC522_Authenticate(&hrc522, PICC_CMD_MF_AUTH_KEY_A,
-                               4, &key, &uid) == RC522_OK)
+        LCD_Clear_Display(&hlcd1);
+        LCD_SetCursor(&hlcd1, 0, 0);
+        LCD_Print(&hlcd1, "UID Bytes:");
+        LCD_SetCursor(&hlcd1, 1, 0);
+        LCD_Print(&hlcd1, msg);
+        HAL_Delay(2000);
+
+        if (uid.uidByte[0] == authorizedUID[0] &&
+            uid.uidByte[1] == authorizedUID[1] &&
+            uid.uidByte[2] == authorizedUID[2] &&
+            uid.uidByte[3] == authorizedUID[3])
         {
-          uint8_t data[18];
-          uint8_t dataLen = 18;
-          if (RC522_ReadBlock(&hrc522, 4, data, &dataLen) == RC522_OK)
-          {
-            /* Process data */
-          }
-          RC522_StopCrypto(&hrc522);
+          LCD_Clear_Display(&hlcd1);
+          LCD_SetCursor(&hlcd1, 0, 0);
+          LCD_Print(&hlcd1, "ACCESS GRANTED!");
+          // TODO: Bật relay, mở khóa, v.v...
         }
+
+        else
+        {
+          LCD_Clear_Display(&hlcd1);
+          LCD_SetCursor(&hlcd1, 0, 0);
+          LCD_Print(&hlcd1, "ACCESS DENIED!");
+        }
+
+        HAL_Delay(2000);
+        LCD_Clear_Display(&hlcd1);
+        LCD_SetCursor(&hlcd1, 0, 0);
+        LCD_Print(&hlcd1, "Scan RFID Card");
       }
+
       RC522_HaltCard(&hrc522);
-      HAL_Delay(1000);
     }
+
+    HAL_Delay(200);
   }
   /* USER CODE END 3 */
 }
@@ -191,36 +223,36 @@ void SystemClock_Config(void)
 }
 
 /**
- * @brief I2C2 Initialization Function
+ * @brief I2C1 Initialization Function
  * @param None
  * @retval None
  */
-static void MX_I2C2_Init(void)
+static void MX_I2C1_Init(void)
 {
 
-  /* USER CODE BEGIN I2C2_Init 0 */
+  /* USER CODE BEGIN I2C1_Init 0 */
 
-  /* USER CODE END I2C2_Init 0 */
+  /* USER CODE END I2C1_Init 0 */
 
-  /* USER CODE BEGIN I2C2_Init 1 */
+  /* USER CODE BEGIN I2C1_Init 1 */
 
-  /* USER CODE END I2C2_Init 1 */
-  hi2c2.Instance = I2C2;
-  hi2c2.Init.ClockSpeed = 100000;
-  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c2.Init.OwnAddress1 = 0;
-  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c2.Init.OwnAddress2 = 0;
-  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C2_Init 2 */
+  /* USER CODE BEGIN I2C1_Init 2 */
 
-  /* USER CODE END I2C2_Init 2 */
+  /* USER CODE END I2C1_Init 2 */
 }
 
 /**
