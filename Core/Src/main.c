@@ -21,8 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "RC522.h"
 #include "LCD_I2C.h"
+#include "RC522.h"
+#include "string.h"
 #include "stdio.h"
 /* USER CODE END Includes */
 
@@ -33,7 +34,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define AUTHORIZED_CARD_1 {0x12, 0x34, 0x56, 0x78, 0x90} // V� d? UID th? 1
+#define AUTHORIZED_CARD_2 {0xAB, 0xCD, 0xEF, 0x12, 0x34} // V� d? UID th? 2
+#define AUTHORIZED_CARD_3 {0x71, 0xAB, 0xE9, 0x06}       // V� d? UID th? 3
+#define AUTHORIZED_CARD_4 {0xF2, 0xD7, 0x22, 0x07}       // V� d? UID th? 4
 
+#define MAX_AUTHORIZED_CARDS 4
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,20 +55,79 @@ SPI_HandleTypeDef hspi1;
 /* USER CODE BEGIN PV */
 LCD_HandleTypeDef hlcd1;
 RC522_HandleTypeDef hrc522;
+
+MFRC522_Status status;
+uint8_t str[MAX_LEN]; // Max_LEN = 16
+uint8_t sNum[5];
+uint8_t lastCard[5] = {0}; // Luu th? cu?i c�ng d� d?c d? tr�nh d?c tr�ng
+uint8_t cardPresent = 0;   // Flag ki?m tra c� th? hay kh�ng
+char displayBuffer[17];
+
+const uint8_t authorizedCards[MAX_AUTHORIZED_CARDS][5] = {
+    AUTHORIZED_CARD_1,
+    AUTHORIZED_CARD_2,
+    AUTHORIZED_CARD_3,
+    AUTHORIZED_CARD_4
+
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_SPI1_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint8_t isCardAuthorized(uint8_t *cardUID)
+{
+  for (int i = 0; i < MAX_AUTHORIZED_CARDS; i++)
+  {
+    if (memcmp(cardUID, authorizedCards[i], 4) == 0) // So s�nh 4 byte UID
+    {
+      return 1; // Th? du?c ph�p
+    }
+  }
+  return 0; // Th? kh�ng du?c ph�p
+}
 
+void DisplayCardInfo(uint8_t *cardUID, uint8_t isAuthorized)
+{
+  char uidStr[17];
+
+  // X�a m�n h�nh
+  LCD_Clear_Display(&hlcd1);
+
+  // Hi?n th? UID ? d�ng 1
+  sprintf(uidStr, "UID: %02X%02X%02X%02X",
+          cardUID[0], cardUID[1], cardUID[2], cardUID[3]);
+  LCD_SetCursor(&hlcd1, 0, 0);
+  LCD_Print(&hlcd1, uidStr);
+
+  // Hi?n th? tr?ng th�i ? d�ng 2
+  LCD_SetCursor(&hlcd1, 0, 1);
+  HAL_Delay(3000);
+  if (isAuthorized)
+  {
+    LCD_Print(&hlcd1, "ACCESS GRANTED!");
+    HAL_Delay(3000);
+
+    // TODO: Th�m h�nh d?ng khi du?c ph�p
+    // V� d?: B?t d�n LED trong 2 gi�y
+    // HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+    // HAL_Delay(2000);
+    // HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+  }
+  else
+  {
+    LCD_Print(&hlcd1, "ACCESS DENIED!");
+    HAL_Delay(3000);
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -94,35 +159,39 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_SPI1_Init();
   MX_I2C1_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  RC522_UID uid;
-  char msg[32];
-
-  uint8_t authorizedUID[4] = {0x71, 0x04, 0x00, 0x00};
-
   LCD_Init(&hlcd1, &hi2c1, LCD_ADDR);
+  LCD_Backlight(&hlcd1);
+
   LCD_Clear_Display(&hlcd1);
+  MFRC522_Init(&hrc522, &hspi1);
+
+  // �?c version register
+  uint8_t version = Read_MFRC522(VERSION_REG);
+
+  sprintf(displayBuffer, "Ver:0x%02X", version);
   LCD_SetCursor(&hlcd1, 0, 0);
-  LCD_Print(&hlcd1, "RFID System");
+  LCD_Print(&hlcd1, displayBuffer);
 
-  if (RC522_Init(&hrc522, &hspi1, GPIOA, GPIO_PIN_4, GPIOA, GPIO_PIN_3) != RC522_OK)
-  {
-    LCD_SetCursor(&hlcd1, 1, 0);
-    LCD_Print(&hlcd1, "RC522 Error!");
-    Error_Handler();
-  }
+  HAL_Delay(3000);
+  LCD_Clear_Display(&hlcd1);
 
-  uint8_t version = RC522_GetVersion(&hrc522);
-  sprintf(msg, "Ver:0x%02X", version);
-  LCD_SetCursor(&hlcd1, 1, 0);
-  LCD_Print(&hlcd1, msg);
+  // if (version == 0x92 || version == 0x12 || version == 0x18) {
+  //     LCD_SetCursor(&hlcd1, 1, 0);
+  //     LCD_Print(&hlcd1, "RC522 OK!");
+  // } else {
+  //     LCD_SetCursor(&hlcd1, 1, 0);
+  //     LCD_Print(&hlcd1, "RC522 ERROR!");
+  // }
   HAL_Delay(2000);
 
   LCD_Clear_Display(&hlcd1);
   LCD_SetCursor(&hlcd1, 0, 0);
-  LCD_Print(&hlcd1, "Scan RFID Card");
+  LCD_Print(&hlcd1, "RFID RC522!");
+  LCD_SetCursor(&hlcd1, 0, 1);
+  LCD_Print(&hlcd1, "Place your card...");
 
   /* USER CODE END 2 */
 
@@ -133,53 +202,79 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (RC522_IsCardPresent(&hrc522) == RC522_OK)
+    status = MFRC522_Request(PICC_REQIDL, str);
+
+    if (status == MI_OK)
     {
-      LCD_SetCursor(&hlcd1, 1, 0);
-      LCD_Print(&hlcd1, "Reading...     ");
-      HAL_Delay(1000);
+      // �� t�m th?y th?, th?c hi?n ch?ng va ch?m d? d?c UID
+      status = MFRC522_Anticoll(str);
 
-      if (RC522_ReadCardUID(&hrc522, &uid) == RC522_OK)
+      //    char dbg[17];
+      //    sprintf(dbg, "n=%d , lb=%d", debug_n, debug_lastBits);
+      //
+      //		LCD_Clear_Display(&hlcd1);
+      //    LCD_SetCursor(&hlcd1, 0, 0);
+      //    LCD_Print(&hlcd1, dbg);
+      //    HAL_Delay(1000);
+      //
+      //		char dbg1[17];
+      //    sprintf(dbg1, "%02X%02X%02X%02X%02X", debug_raw[0], debug_raw[1], debug_raw[2], debug_raw[3], debug_raw[4]);
+      //    LCD_SetCursor(&hlcd1, 0, 1);
+      //    LCD_Print(&hlcd1, dbg1);
+      //    HAL_Delay(1000);
+
+      if (status == MI_OK)
       {
-
-        sprintf(msg, "%02X %02X %02X %02X",
-                uid.uidByte[0], uid.uidByte[1], uid.uidByte[2], uid.uidByte[3]);
-
+        // uint8_t bcc = str[0] ^ str[1] ^ str[2] ^ str[3];
+        char dbg[17];
+        sprintf(dbg, "%02X%02X%02X%02X/%02X", str[0], str[1], str[2], str[3], str[4]);
         LCD_Clear_Display(&hlcd1);
         LCD_SetCursor(&hlcd1, 0, 0);
-        LCD_Print(&hlcd1, "UID Bytes:");
-        LCD_SetCursor(&hlcd1, 1, 0);
-        LCD_Print(&hlcd1, msg);
-        HAL_Delay(2000);
+        LCD_Print(&hlcd1, dbg);
+        HAL_Delay(1000);
+        // Sao ch�p UID (5 byte: 4 byte UID + 1 byte checksum)
+        memcpy(sNum, str, 5);
 
-        if (uid.uidByte[0] == authorizedUID[0] &&
-            uid.uidByte[1] == authorizedUID[1] &&
-            uid.uidByte[2] == authorizedUID[2] &&
-            uid.uidByte[3] == authorizedUID[3])
+        // Ki?m tra xem c� ph?i th? m?i kh�ng (tr�nh d?c tr�ng)
+        if (memcmp(sNum, lastCard, 5) != 0)
         {
-          LCD_Clear_Display(&hlcd1);
-          LCD_SetCursor(&hlcd1, 0, 0);
-          LCD_Print(&hlcd1, "ACCESS GRANTED!");
-          // TODO: Bật relay, mở khóa, v.v...
-        }
+          // Luu l?i th? v?a d?c
+          memcpy(lastCard, sNum, 5);
+          cardPresent = 1;
 
-        else
-        {
-          LCD_Clear_Display(&hlcd1);
-          LCD_SetCursor(&hlcd1, 0, 0);
-          LCD_Print(&hlcd1, "ACCESS DENIED!");
-        }
+          // Ki?m tra quy?n truy c?p
+          uint8_t authorized = isCardAuthorized(sNum);
 
-        HAL_Delay(2000);
-        LCD_Clear_Display(&hlcd1);
-        LCD_SetCursor(&hlcd1, 0, 0);
-        LCD_Print(&hlcd1, "Scan RFID Card");
+          // Hi?n th? th�ng tin th? l�n LCD
+          DisplayCardInfo(sNum, authorized);
+
+          // N?u du?c ph�p, hi?n th? Access Granted
+          if (authorized)
+          {
+            HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+            HAL_Delay(2000);
+          }
+        }
       }
+    }
+    else
+    {
+      // Kh�ng c� th?, reset flag
+      if (cardPresent == 1)
+      {
+        cardPresent = 0;
+        memset(lastCard, 0, 5);
 
-      RC522_HaltCard(&hrc522);
+        // X�a m�n h�nh v� hi?n th? th�ng b�o ch?
+        LCD_Clear_Display(&hlcd1);
+        LCD_SetCursor(&hlcd1, 0, 0);
+        LCD_Print(&hlcd1, "RFID RC522!");
+        LCD_SetCursor(&hlcd1, 0, 1);
+        LCD_Print(&hlcd1, "Place your card...");
+      }
     }
 
-    HAL_Delay(200);
+    HAL_Delay(100);
   }
   /* USER CODE END 3 */
 }
@@ -278,7 +373,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -305,19 +400,40 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, RESET_Pin | CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : RESET_Pin CS_Pin */
-  GPIO_InitStruct.Pin = RESET_Pin | CS_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RESET_GPIO_Port, RESET_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RESET_Pin */
+  GPIO_InitStruct.Pin = RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(RESET_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : CS_Pin */
+  GPIO_InitStruct.Pin = CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(CS_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
